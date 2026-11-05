@@ -51,6 +51,15 @@ static LOCATION: LazyLock<Location> = LazyLock::new(|| {
 });
 impl Location {
     fn miniflare_sqlite_file(&self) -> Result<Option<PathBuf>, io::Error> {
+        // Like sqlx's macros, prefer the database at `DATABASE_URL`.
+        if let Ok(url) = std::env::var("DATABASE_URL") {
+            let path = url
+                .strip_prefix("sqlite://")
+                .or_else(|| url.strip_prefix("sqlite:"))
+                .unwrap_or(&url);
+            return Ok(Some(PathBuf::from(path)));
+        }
+
         fn miniflare_d1_dir_path_in_parent(parent_path: impl AsRef<Path>) -> PathBuf {
             parent_path
                 .as_ref()
@@ -88,6 +97,12 @@ impl Location {
     }
 
     fn dot_sqlx_dir(&self) -> Result<Option<DotSqlx>, io::Error> {
+        // Like sqlx's macros, prefer the query cache at `SQLX_OFFLINE_DIR`.
+        if let Some(dir) = std::env::var_os("SQLX_OFFLINE_DIR") {
+            std::fs::create_dir_all(&dir)?;
+            return Ok(Some(DotSqlx(dir.into())));
+        }
+
         for parent_candidate in [&*LOCATION.manifest_dir, &*LOCATION.workspace_root] {
             if let Some(it) = DotSqlx::find_in_parent(parent_candidate)? {
                 return Ok(Some(it));

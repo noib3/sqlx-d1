@@ -126,7 +126,10 @@ impl sqlx_core::type_info::TypeInfo for D1TypeInfo {
             D1Type::Real => "REAL",
             D1Type::Blob => "BLOB",
             D1Type::Integer => "INTEGER",
-            D1Type::Boolean | D1Type::Date | D1Type::Time | D1Type::Datetime => unreachable!(),
+            D1Type::Boolean => "BOOLEAN",
+            D1Type::Date => "DATE",
+            D1Type::Time => "TIME",
+            D1Type::Datetime => "DATETIME",
         }
     }
 }

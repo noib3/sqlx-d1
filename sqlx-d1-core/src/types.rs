@@ -189,6 +189,11 @@ const _: (/* bool */) = {
         fn type_info() -> <D1 as sqlx_core::database::Database>::TypeInfo {
             D1TypeInfo::boolean()
         }
+
+        // D1 has no boolean type, so booleans always come back as integers.
+        fn compatible(ty: &<D1 as sqlx_core::database::Database>::TypeInfo) -> bool {
+            matches!(**ty, crate::type_info::D1Type::Boolean | crate::type_info::D1Type::Integer)
+        }
     }
 
     impl<'q> Encode<'q, D1> for bool {

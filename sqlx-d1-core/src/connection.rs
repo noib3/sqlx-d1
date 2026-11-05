@@ -539,9 +539,10 @@ const _: () = {
     impl std::str::FromStr for D1ConnectOptions {
         type Err = sqlx_core::Error;
 
-        fn from_str(_: &str) -> Result<Self, Self::Err> {
+        fn from_str(url: &str) -> Result<Self, Self::Err> {
             #[cfg(target_arch = "wasm32")]
             {
+                let _ = url;
                 Err(sqlx_core::Error::Configuration(From::from(
                     URL_CONVERSION_UNSUPPORTED_MESSAGE,
                 )))
@@ -553,6 +554,18 @@ const _: () = {
                     fs, io,
                     path::{Path, PathBuf},
                 };
+
+                // Like sqlx's, connect to the database at the URL's path.
+                if let Some(path) = url
+                    .strip_prefix("sqlite://")
+                    .or_else(|| url.strip_prefix("sqlite:"))
+                    .filter(|path| !path.is_empty())
+                {
+                    return Ok(Self {
+                        pragmas: TogglePragmas::new(),
+                        sqlite_path: PathBuf::from(path),
+                    });
+                }
 
                 fn maybe_miniflare_d1_dir_of(dir: impl AsRef<Path>) -> PathBuf {
                     dir.as_ref()

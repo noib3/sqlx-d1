@@ -308,9 +308,13 @@ fn compare_expand(
         }
     };
 
-    if let Some(dot_sqlx_dir) = LOCATION
-        .dot_sqlx_dir()
-        .map_err(|e| syn::Error::new(input.src_span, e))?
+    // Only update the query cache when the query was described by the
+    // miniflare D1 emulator. Otherwise the description was just read from the
+    // cache, and the source directory might not be writable.
+    if matches!(LOCATION.miniflare_sqlite_file(), Ok(Some(_)))
+        && let Some(dot_sqlx_dir) = LOCATION
+            .dot_sqlx_dir()
+            .map_err(|e| syn::Error::new(input.src_span, e))?
     {
         dot_sqlx_dir
             .cache_describe(&input.sql, describe)

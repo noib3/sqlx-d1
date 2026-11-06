@@ -2,6 +2,8 @@
 
 #[derive(Default)]
 pub struct D1QueryResult {
+    /// D1's `changes`, which unlike SQLite's `sqlite3_changes()` also counts
+    /// the rows changed by triggers.
     pub rows_affected: usize,
     pub last_insert_row_id: i64,
 }

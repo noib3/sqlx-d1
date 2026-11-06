@@ -313,6 +313,7 @@ const _: () = {
                 struct FetchMany<F> {
                     raw_rows_future: F,
                     raw_rows: Option<js_sys::ArrayIntoIter>,
+                    query_result: Option<crate::query_result::D1QueryResult>,
                 }
                 const _: () = {
                     /* SAFETY: used in single-threaded Workers */
@@ -323,13 +324,19 @@ const _: () = {
                             Self {
                                 raw_rows_future,
                                 raw_rows: None,
+                                query_result: None,
                             }
                         }
                     }
 
                     impl<F> futures_core::Stream for FetchMany<F>
                     where
-                        F: Future<Output = Result<Option<js_sys::Array>, JsValue>>,
+                        F: Future<
+                            Output = Result<
+                                (Option<js_sys::Array>, crate::query_result::D1QueryResult),
+                                JsValue,
+                            >,
+                        >,
                     {
                         type Item = Result<
                             Either<crate::query_result::D1QueryResult, D1Row>,
@@ -342,21 +349,29 @@ const _: () = {
                         ) -> std::task::Poll<Option<Self::Item>> {
                             use std::task::Poll;
 
+                            /* yields the rows, then the query result once they're exhausted */
                             fn pop_next(
                                 raw_rows: &mut js_sys::ArrayIntoIter,
+                                query_result: &mut Option<crate::query_result::D1QueryResult>,
                             ) -> Option<
                                 Result<
                                     Either<crate::query_result::D1QueryResult, D1Row>,
                                     sqlx_core::Error,
                                 >,
                             > {
-                                let raw_row = raw_rows.next()?;
-                                Some(D1Row::from_raw(raw_row).map(Either::Right))
+                                match raw_rows.next() {
+                                    Some(raw_row) => {
+                                        Some(D1Row::from_raw(raw_row).map(Either::Right))
+                                    }
+                                    None => query_result.take().map(|r| Ok(Either::Left(r))),
+                                }
                             }
 
                             let this = unsafe { self.get_unchecked_mut() };
                             match &mut this.raw_rows {
-                                Some(raw_rows) => Poll::Ready(pop_next(raw_rows)),
+                                Some(raw_rows) => {
+                                    Poll::Ready(pop_next(raw_rows, &mut this.query_result))
+                                }
                                 None => {
                                     match unsafe { Pin::new_unchecked(&mut this.raw_rows_future) }
                                         .poll(cx)
@@ -365,15 +380,19 @@ const _: () = {
                                         Poll::Ready(Err(e)) => Poll::Ready(Some(Err(
                                             sqlx_core::Error::from(D1Error::from(e)),
                                         ))),
-                                        Poll::Ready(Ok(maybe_raw_rows)) => {
+                                        Poll::Ready(Ok((maybe_raw_rows, query_result))) => {
+                                            this.query_result = Some(query_result);
                                             this.raw_rows = Some(
                                                 maybe_raw_rows
                                                     .unwrap_or_else(js_sys::Array::new)
                                                     .into_iter(),
                                             );
-                                            Poll::Ready(pop_next(unsafe {
-                                                this.raw_rows.as_mut().unwrap_unchecked()
-                                            }))
+                                            Poll::Ready(pop_next(
+                                                unsafe {
+                                                    this.raw_rows.as_mut().unwrap_unchecked()
+                                                },
+                                                &mut this.query_result,
+                                            ))
                                         }
                                     }
                                 }
@@ -389,7 +408,20 @@ const _: () = {
                     }
 
                     let d1_result_jsvalue = JsFuture::from(statement.all()?).await?;
-                    worker_sys::D1Result::from(d1_result_jsvalue).results()
+                    let d1_result = worker_sys::D1Result::from(d1_result_jsvalue);
+
+                    let meta = d1_result.meta()?;
+                    let get_meta_number = |key: &str| -> Result<f64, JsValue> {
+                        Ok(js_sys::Reflect::get(&meta, &JsValue::from_str(key))?
+                            .as_f64()
+                            .unwrap_or_default())
+                    };
+                    let query_result = crate::query_result::D1QueryResult {
+                        rows_affected: get_meta_number("changes")? as usize,
+                        last_insert_row_id: get_meta_number("last_row_id")? as i64,
+                    };
+
+                    Ok((d1_result.results()?, query_result))
                 }))
             }
         }

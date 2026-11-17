@@ -1,6 +1,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod arguments;
+pub mod batch;
 mod column;
 mod connection;
 mod error;

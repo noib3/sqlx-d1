@@ -148,6 +148,103 @@ async fn main(
                 worker::Response::from_json(&user)
             }
         })
+        .post_async("/batch", |mut req, _ctx| {
+            let conn = conn.clone();
+            async move {
+                let requests: Vec<CreateUserRequest> = req.json().await?;
+
+                // Either all of the users are created, or none of them are.
+                let created_ids = conn
+                    .batch(
+                        requests
+                            .iter()
+                            .map(|CreateUserRequest { name, age }| {
+                                sqlx_d1::batch::fetch_one(sqlx_d1::query_scalar!(
+                                    "INSERT INTO users (name, age) VALUES (?, ?) RETURNING id",
+                                    name,
+                                    age
+                                ))
+                            })
+                            .collect::<sqlx_d1::batch::Batch<Vec<_>>>(),
+                    )
+                    .await
+                    .map_err(|e| worker::Error::RustError(e.to_string()))?;
+
+                worker::Response::from_json(&created_ids).map(|res| res.with_status(201))
+            }
+        })
+        .post_async("/batch/count", |mut req, _ctx| {
+            let conn = conn.clone();
+            async move {
+                let CreateUserRequest { name, age } = req.json().await?;
+
+                let (created_id, count) = conn
+                    .batch((
+                        sqlx_d1::batch::fetch_one(sqlx_d1::query_scalar!(
+                            "INSERT INTO users (name, age) VALUES (?, ?) RETURNING id",
+                            name,
+                            age
+                        )),
+                        sqlx_d1::batch::fetch_one(sqlx_d1::query_scalar!(
+                            "SELECT COUNT(*) FROM users"
+                        )),
+                    ))
+                    .await
+                    .map_err(|e| worker::Error::RustError(e.to_string()))?;
+
+                worker::Response::from_json(&(created_id, count))
+            }
+        })
+        .get_async("/batch/names", |_req, _ctx| {
+            let conn = conn.clone();
+            async move {
+                let (names, missing) = conn
+                    .batch((
+                        sqlx_d1::batch::fetch_all(sqlx_d1::query_scalar!(
+                            "SELECT name FROM users ORDER BY id"
+                        )),
+                        sqlx_d1::batch::fetch_optional(sqlx_d1::query_scalar!(
+                            "SELECT name FROM users WHERE id = 0"
+                        )),
+                    ))
+                    .await
+                    .map_err(|e| worker::Error::RustError(e.to_string()))?;
+
+                worker::Response::from_json(&(names, missing))
+            }
+        })
+        .post_async("/batch/rollback", |_req, _ctx| {
+            let conn = conn.clone();
+            async move {
+                let count =
+                    || sqlx_d1::query_scalar!("SELECT COUNT(*) FROM users").fetch_one(&conn);
+
+                let before = count()
+                    .await
+                    .map_err(|e| worker::Error::RustError(e.to_string()))?;
+
+                // The second insert breaks the `NOT NULL` constraint on `name`, so
+                // the first one is rolled back too.
+                let error = conn
+                    .batch((
+                        sqlx_d1::batch::execute(sqlx_d1::query!(
+                            "INSERT INTO users (name) VALUES ('rolled back')"
+                        )),
+                        sqlx_d1::batch::execute(sqlx_d1::query(
+                            "INSERT INTO users (name) VALUES (NULL)",
+                        )),
+                    ))
+                    .await
+                    .err()
+                    .map(|e| e.to_string());
+
+                let after = count()
+                    .await
+                    .map_err(|e| worker::Error::RustError(e.to_string()))?;
+
+                worker::Response::from_json(&(before, after, error))
+            }
+        })
         .run(req, env)
         .await
 }

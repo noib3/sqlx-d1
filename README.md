@@ -43,11 +43,13 @@ SQLx-D1 works around them by loading `sqlx-sqlite` **only in macro context** and
 - No environment variable or `.env` file is needed
     - D1 emulator's location is fixed to `.wrangler/state/v3/d1/miniflare-D1DatabaseObject`
     - falling back to offline mode when it doesn't exist and `.sqlx` directory exists
+- Atomic batches of queries with `D1Connection::batch`, built on D1's `batch()` ( see the `batch` module )
 
 ## Unsupported features
 
-- Transaction
-    - Let's wait for Cloudflare's side to support transation on D1 !
+- Interactive transaction
+    - D1 can't read a query's rows inside a transaction before deciding on the next query
+    - alternatively, `D1Connection::batch` runs queries known in advance as a single transaction
 - Connection pool ( `sqlx::Pool` internally requires Rust async runtime (tokio / asycn-std) and time implemetation of WASM runtime which is not done on Cloudflare Workers )
     - alternatively, `&sqlx_d1::D1Connection` implements `Executor`, not only `&mut` one.
 - derive `Type`, `Encode`, `Decode`
